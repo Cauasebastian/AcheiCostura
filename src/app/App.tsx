@@ -11,6 +11,7 @@ import { CompanyJobCandidates } from './pages/CompanyJobCandidates';
 import { MinhasCandidaturas } from './pages/MinhasCandidaturas';
 import { BuscaCostureiros } from './pages/BuscaCostureiros';
 import { CostureiroProfile } from './pages/CostureiroProfile';
+import { Profile } from './pages/Profile';
 
 import ContatoPage from './pages/contato';
 import SobreNosPage from './pages/sobre';
@@ -53,6 +54,8 @@ export default function App() {
             <Route path="/contato" element={<ContatoPage />} />
             <Route path="/sobre-nos" element={<SobreNosPage />} />
             <Route path="/planos" element={<PlanosPage />} />
+            <Route path="/perfil" element={<Profile />} />
+            <Route path="/profile" element={<Profile />} />
             {/* Páginas institucionais 
             
             

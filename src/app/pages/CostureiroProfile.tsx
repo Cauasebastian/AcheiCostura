@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   fetchCouturierById,
   fetchProfileImage,
+  fetchOtherImages,
   getEnterpriseCoinsBalance,
   getEnterpriseUnlockedProfiles,
   unlockCouturierProfile,
@@ -159,6 +160,8 @@ export const CostureiroProfile = () => {
   const [profile, setProfile] = useState<CostureiroProfileDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [desbloqueando, setDesbloqueando] = useState(false);
+  const [otherImages, setOtherImages] = useState<string[]>([]);
+  const [loadingOtherImages, setLoadingOtherImages] = useState(false);
   const imageCacheRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -207,6 +210,20 @@ export const CostureiroProfile = () => {
 
           imageCacheRef.current[mapped.id] = imageData;
           setProfile((prev) => (prev ? { ...prev, imageUrl: imageData } : prev));
+        }
+
+        if (mapped.unlocked) {
+          setLoadingOtherImages(true);
+          try {
+            const images = await fetchOtherImages(mapped.id);
+            if (active) setOtherImages(images);
+          } catch (err) {
+            console.error('Erro ao carregar outras imagens:', err);
+          } finally {
+            if (active) setLoadingOtherImages(false);
+          }
+        } else {
+          setOtherImages([]);
         }
       } catch (error: any) {
         if (active) {
@@ -259,6 +276,13 @@ export const CostureiroProfile = () => {
       if (imageData) {
         imageCacheRef.current[profile.id] = imageData;
         setProfile((prev) => (prev ? { ...prev, imageUrl: imageData } : prev));
+      }
+
+      try {
+        const images = await fetchOtherImages(profile.id);
+        setOtherImages(images);
+      } catch (err) {
+        console.error('Erro ao recarregar outras imagens:', err);
       }
 
       toast.success(`Perfil de ${profile.name} desbloqueado com sucesso.`);
@@ -539,6 +563,53 @@ export const CostureiroProfile = () => {
                       </div>
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.35 }}
+            >
+              <Card className="border-0 shadow-sm rounded-3xl bg-white">
+                <CardContent className="p-8">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                      <Settings className="w-5 h-5 text-[#006D5B]" /> Outras imagens
+                    </h3>
+                    {loadingOtherImages && (
+                      <span className="text-xs text-gray-500">Carregando...</span>
+                    )}
+                  </div>
+
+                  {isLocked ? (
+                    <div className="p-4 rounded-2xl bg-[#F0FAF8] border border-dashed border-[#006D5B]/30 text-sm text-gray-600 text-center">
+                      Desbloqueie o perfil para visualizar a galeria completa de fotos do profissional.
+                    </div>
+                  ) : otherImages.length === 0 ? (
+                    <p className="text-gray-500 text-sm text-center">
+                      Nenhuma imagem adicional encontrada para este profissional.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                      {otherImages.map((url, idx) => (
+                        <div
+                          key={idx}
+                          className="relative group overflow-hidden rounded-xl border border-gray-100 shadow-sm"
+                        >
+                          <img
+                            src={url}
+                            alt={`Galeria ${idx + 1}`}
+                            className="w-full h-32 sm:h-36 object-cover transition-transform duration-300 group-hover:scale-105"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>

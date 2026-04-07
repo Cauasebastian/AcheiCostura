@@ -20,12 +20,60 @@ const inFlightRequests = new Map<string, Promise<unknown>>();
 const responseCache = new Map<string, { expiresAt: number; value: unknown }>();
 const failedRequestCooldown = new Map<string, { expiresAt: number; errorMessage: string }>();
 const inFlightProfileImages = new Map<string, Promise<string | null>>();
+const inFlightOtherImages = new Map<string, Promise<string[]>>();
 const profileImageCache = new Map<string, { expiresAt: number; value: string | null }>();
+const otherImagesCache = new Map<string, { expiresAt: number; value: string[] }>();
 
 const PROFILE_IMAGE_SUCCESS_CACHE_MS = 5 * 60 * 1000;
 const PROFILE_IMAGE_ERROR_COOLDOWN_MS = 2 * 60 * 1000;
+const OTHER_IMAGES_CACHE_MS = 2 * 60 * 1000;
+
+const invalidateProfileImageCache = (userId?: string) => {
+  if (userId) {
+    profileImageCache.delete(`profile-image:${userId}`);
+    inFlightProfileImages.delete(`profile-image:${userId}`);
+    return;
+  }
+  profileImageCache.clear();
+  inFlightProfileImages.clear();
+};
+
+const invalidateOtherImagesCache = (userId?: string) => {
+  if (userId) {
+    otherImagesCache.delete(`other-images:${userId}`);
+    return;
+  }
+  otherImagesCache.clear();
+};
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const arrayBufferToDataUrl = (buffer: ArrayBuffer, contentType = 'image/jpeg') => {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  const base64 = btoa(binary);
+  return `data:${contentType};base64,${base64}`;
+};
+
+const toImageDataUrl = (value?: string | null, contentType = 'image/jpeg'): string | null => {
+  if (!value || typeof value !== 'string') return null;
+  if (value.startsWith('data:') || value.startsWith('http')) return value;
+  return `data:${contentType};base64,${value}`;
+};
+
+const extractUserOtherImages = (userPayload: any): string[] => {
+  const otherImages = Array.isArray(userPayload?.otherImages) ? userPayload.otherImages : [];
+  return otherImages
+    .map((item: any) => toImageDataUrl(item?.data, item?.contentType || 'image/jpeg') || item?.url || null)
+    .filter((url: string | null): url is string => Boolean(url));
+};
 
 const stableStringify = (value: unknown): string => {
   if (value === null || value === undefined) return String(value);
@@ -801,28 +849,29 @@ export const fetchProfileImage = async (userId: string): Promise<string | null> 
         responseType: 'arraybuffer',
       });
       const contentType = response.headers['content-type'] || 'image/jpeg';
-      const bytes = new Uint8Array(response.data);
-      const chunkSize = 0x8000;
-      let binary = '';
-
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        const chunk = bytes.subarray(i, i + chunkSize);
-        binary += String.fromCharCode(...chunk);
-      }
-
-      const base64 = btoa(binary);
-      const value = `data:${contentType};base64,${base64}`;
+      const value = arrayBufferToDataUrl(response.data, contentType);
       profileImageCache.set(cacheKey, {
         expiresAt: Date.now() + PROFILE_IMAGE_SUCCESS_CACHE_MS,
         value,
       });
       return value;
     } catch {
-      profileImageCache.set(cacheKey, {
-        expiresAt: Date.now() + PROFILE_IMAGE_ERROR_COOLDOWN_MS,
-        value: null,
-      });
-      return null;
+      // fallback: alguns ambientes bloqueiam /images/profile/{id}, mas /users/{id} retorna profileImage (byte[])
+      try {
+        const userResponse = await api.get<any>(`/users/${userId}`);
+        const fallback = toImageDataUrl(userResponse.data?.profileImage);
+        profileImageCache.set(cacheKey, {
+          expiresAt: Date.now() + PROFILE_IMAGE_SUCCESS_CACHE_MS,
+          value: fallback,
+        });
+        return fallback;
+      } catch {
+        profileImageCache.set(cacheKey, {
+          expiresAt: Date.now() + PROFILE_IMAGE_ERROR_COOLDOWN_MS,
+          value: null,
+        });
+        return null;
+      }
     } finally {
       inFlightProfileImages.delete(cacheKey);
     }
@@ -830,6 +879,129 @@ export const fetchProfileImage = async (userId: string): Promise<string | null> 
 
   inFlightProfileImages.set(cacheKey, requestPromise);
   return requestPromise;
+};
+
+export const fetchOtherImages = async (userId: string): Promise<string[]> => {
+  const cacheKey = `other-images:${userId}`;
+  const now = Date.now();
+
+  const cached = otherImagesCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const inFlight = inFlightOtherImages.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const promise = (async () => {
+    const list = await cachedGet<any[]>(`/images/others/${userId}`, {
+      cacheMs: OTHER_IMAGES_CACHE_MS,
+      errorCooldownMs: 2000,
+    });
+
+    const fromList = Array.isArray(list)
+      ? list
+          .map((item) => toImageDataUrl(item?.data, item?.contentType || 'image/jpeg') || item?.url || null)
+          .filter((url): url is string => Boolean(url))
+      : [];
+
+    if (fromList.length > 0) {
+      otherImagesCache.set(cacheKey, {
+        expiresAt: now + OTHER_IMAGES_CACHE_MS,
+        value: fromList,
+      });
+      return fromList;
+    }
+
+    // fallback rapido: /users/{id} frequentemente traz otherImages com data em base64
+    try {
+      const userResponse = await cachedGet<any>(`/users/${userId}`, {
+        cacheMs: 1500,
+        errorCooldownMs: 1000,
+      });
+      const fromUser = extractUserOtherImages(userResponse);
+      if (fromUser.length > 0) {
+        otherImagesCache.set(cacheKey, {
+          expiresAt: now + OTHER_IMAGES_CACHE_MS,
+          value: fromUser,
+        });
+        return fromUser;
+      }
+    } catch {
+      // segue para fallback por fileId
+    }
+
+    // fallback final: baixa por fileId (endpoint observado em runtime)
+    const fetchByFileId = async (fileId: string, hintType?: string): Promise<string | null> => {
+      try {
+        const response = await api.get<ArrayBuffer>(`/images/others/${userId}`, {
+          params: { fileId },
+          responseType: 'arraybuffer',
+        });
+
+        const rawType = response.headers['content-type'] || hintType || '';
+        const contentType = rawType.toLowerCase();
+        if (contentType.startsWith('image/')) {
+          return arrayBufferToDataUrl(response.data, rawType || 'image/jpeg');
+        }
+
+        // se voltar JSON no arraybuffer, tenta extrair data/url
+        try {
+          const text =
+            typeof TextDecoder !== 'undefined'
+              ? new TextDecoder().decode(new Uint8Array(response.data))
+              : String.fromCharCode(...new Uint8Array(response.data));
+          const parsed = JSON.parse(text);
+
+          if (Array.isArray(parsed)) {
+            const target = parsed.find((item: any) => item?.id === fileId) || parsed[0];
+            return (
+              toImageDataUrl(target?.data, target?.contentType || hintType || 'image/jpeg') ||
+              target?.url ||
+              null
+            );
+          }
+
+          return (
+            toImageDataUrl(parsed?.data, parsed?.contentType || hintType || 'image/jpeg') ||
+            parsed?.url ||
+            null
+          );
+        } catch {
+          // fallback final absoluto: trata buffer como imagem mesmo com content-type incorreto
+          return arrayBufferToDataUrl(response.data, hintType || 'image/jpeg');
+        }
+      } catch {
+        return null;
+      }
+    };
+
+    const fromFileId = Array.isArray(list)
+      ? (
+          await Promise.all(
+            list.map((item: any) =>
+              item?.id ? fetchByFileId(item.id, item?.contentType || 'image/jpeg') : Promise.resolve(null)
+            )
+          )
+        ).filter((url): url is string => Boolean(url))
+      : [];
+
+    otherImagesCache.set(cacheKey, {
+      expiresAt: now + OTHER_IMAGES_CACHE_MS,
+      value: fromFileId,
+    });
+    return fromFileId;
+  })().catch((error) => {
+    console.error('Erro ao buscar outras imagens:', error);
+    throw new Error('Erro ao carregar imagens adicionais');
+  }).finally(() => {
+    inFlightOtherImages.delete(cacheKey);
+  });
+
+  inFlightOtherImages.set(cacheKey, promise);
+  return promise;
 };
 
 export const unlockCouturierProfile = async (enterpriseId: string, couturierId: string): Promise<void> => {
@@ -1080,6 +1252,18 @@ export const getCurrentUser = async (): Promise<User | null> => {
   }
 };
 
+export const getUserById = async (userId: string): Promise<any> => {
+  try {
+    return await cachedGet<any>(`/users/${userId}`, {
+      cacheMs: 2000,
+      errorCooldownMs: 1000,
+    });
+  } catch (error: any) {
+    const message = extractErrorMessage(error, 'Erro ao carregar dados do usuário');
+    throw new Error(message);
+  }
+};
+
 export const updateUser = async (userId: string, payload: Record<string, any>) => {
   try {
     const response = await api.put(`/users/${userId}`, payload);
@@ -1091,7 +1275,7 @@ export const updateUser = async (userId: string, payload: Record<string, any>) =
   }
 };
 
-export const uploadProfileImage = async (file: File) => {
+export const uploadProfileImage = async (file: File, userId?: string) => {
   const formData = new FormData();
   formData.append('file', file);
   try {
@@ -1100,6 +1284,7 @@ export const uploadProfileImage = async (file: File) => {
         'Content-Type': 'multipart/form-data',
       },
     });
+    invalidateProfileImageCache(userId);
     return response.data;
   } catch (error: any) {
     const message =
@@ -1108,7 +1293,7 @@ export const uploadProfileImage = async (file: File) => {
   }
 };
 
-export const uploadOtherImages = async (files: File[]) => {
+export const uploadOtherImages = async (files: File[], userId?: string) => {
   const formData = new FormData();
   files.forEach((file) => {
     formData.append('files', file);
@@ -1119,10 +1304,22 @@ export const uploadOtherImages = async (files: File[]) => {
         'Content-Type': 'multipart/form-data',
       },
     });
+    invalidateOtherImagesCache(userId);
     return response.data;
   } catch (error: any) {
     const message =
       error.response?.data || error.response?.data?.message || 'Erro ao enviar imagens';
+    throw new Error(message);
+  }
+};
+
+export const clearOtherImages = async (userId?: string) => {
+  try {
+    await api.delete('/images/others');
+    invalidateOtherImagesCache(userId);
+  } catch (error: any) {
+    const message =
+      error.response?.data || error.response?.data?.message || 'Erro ao remover imagens da galeria';
     throw new Error(message);
   }
 };

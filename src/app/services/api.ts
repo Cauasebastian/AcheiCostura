@@ -409,6 +409,22 @@ interface ApplicationResponse {
   };
 }
 
+export type JobApplication = {
+  id: string;
+  jobId: string;
+  status: Application['status'];
+  message: string;
+  createdAt: string;
+  seamstress?: {
+    id: string;
+    name?: string;
+    city?: string;
+    state?: string;
+    ratingAverage?: number;
+    category?: string;
+  };
+};
+
 const contractTypeApiToUi: Record<string, string> = {
   FREELA: 'Freela',
   PJ: 'PJ',
@@ -481,6 +497,26 @@ const mapApplicationResponseToApplication = (
   status: mapApplicationStatusToFrontend(application.status),
   message: application.message || '',
   createdAt: application.createdAt,
+});
+
+const mapApplicationResponseToJobApplication = (
+  application: ApplicationResponse
+): JobApplication => ({
+  id: application.id,
+  jobId: application.job?.id || '',
+  status: mapApplicationStatusToFrontend(application.status),
+  message: application.message || '',
+  createdAt: application.createdAt,
+  seamstress: application.seamstress
+    ? {
+        id: application.seamstress.id,
+        name: application.seamstress.name,
+        city: application.seamstress.city,
+        state: application.seamstress.state,
+        ratingAverage: application.seamstress.ratingAverage,
+        category: application.seamstress.category,
+      }
+    : undefined,
 });
 
 // Reutiliza o mock existente como fallback em caso de erro de rede
@@ -583,6 +619,8 @@ export const fetchServices = async (
   }
 };
 
+export const listJobs = fetchServices;
+
 export const fetchFeaturedServices = async (): Promise<Service[]> => {
   try {
     const data = await cachedGet<JobResponse[]>('/api/jobs', {
@@ -623,6 +661,8 @@ export const fetchServiceById = async (id: string): Promise<Service | null> => {
     };
   }
 };
+
+export const getJobById = fetchServiceById;
 
 export interface CouturierApiDTO {
   id: string;
@@ -884,13 +924,14 @@ export const closeJob = async (jobId: string): Promise<Service> => {
   }
 };
 
-export const listJobApplications = async (jobId: string): Promise<ApplicationResponse[]> => {
+export const listJobApplications = async (jobId: string): Promise<JobApplication[]> => {
   try {
     const data = await cachedGet<ApplicationResponse[]>(`/api/jobs/${jobId}/applications`, {
       cacheMs: 400,
       errorCooldownMs: 1500,
     });
-    return Array.isArray(data) ? data : [];
+    if (!Array.isArray(data)) return [];
+    return data.map(mapApplicationResponseToJobApplication);
   } catch (error: any) {
     const message = extractErrorMessage(error, 'Erro ao buscar candidaturas do job');
     throw new Error(message);

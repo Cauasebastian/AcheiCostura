@@ -128,9 +128,9 @@ export const ServiceCard = ({ service }: ServiceCardProps) => {
           )}
         </CardContent>
 
-        <CardFooter className="pt-0">
+        <CardFooter className="pt-0" >
           <Button 
-            className="w-full"
+            className="w-full bg-[#006D5B] hover:bg-[#006D5B]/90 text-white"
             onClick={() => navigate(`/service/${service.id}`)}
             variant={service.applied ? "secondary" : "default"}
           >

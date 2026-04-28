@@ -130,9 +130,15 @@ export const Header = () => {
           </div>
         </div>
 
-        {/* Mobile Menu Dropdown */}
-        {mobileMenuOpen && (
-          <nav className="lg:hidden mt-4 pt-2 border-t border-gray-100 flex flex-col gap-1 pb-4">
+        {/* 👇 Mobile Menu Dropdown Animado 👇 */}
+        <nav 
+          className={`lg:hidden flex flex-col transition-all duration-300 ease-in-out overflow-hidden ${
+            mobileMenuOpen 
+              ? "max-h-[600px] opacity-100 mt-4 pt-2 border-t border-gray-100 pb-4 pointer-events-auto" 
+              : "max-h-0 opacity-0 mt-0 pt-0 pb-0 border-t-0 border-transparent pointer-events-none"
+          }`}
+        >
+          <div className="flex flex-col gap-1">
             {[
               { to: "/", label: "Serviços" },
               { to: "/my-applications", label: "Minhas Candidaturas" },
@@ -151,33 +157,33 @@ export const Header = () => {
                 {link.label}
               </Link>
             ))}
+          </div>
 
-            {/* Botões Animados dentro do menu para mobile */}
-            {!user && (
-              <div className="flex flex-col gap-2 mt-2 px-3 sm:hidden">
-                <Button
-                  className="w-full bg-transparent border border-[#006D5B] text-[#006D5B] font-medium transition-all duration-300 hover:bg-[#006D5B] hover:text-white active:bg-[#006D5B] active:text-white active:scale-[0.98]"
-                  variant="outline"
-                  onClick={() => {
-                    navigate('/login');
-                    setMobileMenuOpen(false);
-                  }}
-                >
-                  Fazer Login
-                </Button>
-                <Button
-                  className="w-full bg-[#006D5B] text-white font-medium shadow-sm transition-all duration-300 hover:bg-[#005a4b] active:bg-[#006D5B] active:scale-[0.98]"
-                  onClick={() => {
-                    navigate('/register');
-                    setMobileMenuOpen(false);
-                  }}
-                >
-                  Cadastrar
-                </Button>
-              </div>
-            )}
-          </nav>
-        )}
+          {/* Botões Animados dentro do menu para mobile */}
+          {!user && (
+            <div className="flex flex-col gap-2 mt-4 px-3 sm:hidden">
+              <Button
+                className="w-full bg-transparent border border-[#006D5B] text-[#006D5B] font-medium transition-all duration-300 hover:bg-[#006D5B] hover:text-white active:bg-[#006D5B] active:text-white active:scale-[0.98]"
+                variant="outline"
+                onClick={() => {
+                  navigate('/login');
+                  setMobileMenuOpen(false);
+                }}
+              >
+                Fazer Login
+              </Button>
+              <Button
+                className="w-full bg-[#006D5B] text-white font-medium shadow-sm transition-all duration-300 hover:bg-[#005a4b] active:bg-[#006D5B] active:scale-[0.98]"
+                onClick={() => {
+                  navigate('/register');
+                  setMobileMenuOpen(false);
+                }}
+              >
+                Cadastrar
+              </Button>
+            </div>
+          )}
+        </nav>
       </div>
     </header>
   );
